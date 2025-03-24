@@ -1874,7 +1874,7 @@ def create_reaction_rate_contours_dG_CO(co_binding_range, temp_range, fugacity_d
     #     'Fe': 0,    # Fe at center
     #     'Cu': 5,    # Cu label above Fe
     #     'Au': 10,   # Au label above Fe
-    #     'Ag': 15    # Ag label above Fe
+    #     'Ag': 15    # Ag label above Fe ch
     # }
     print(vertical_offsets)
     horizontal_offsets = {'Pd': -1,
