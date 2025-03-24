@@ -7,3 +7,5 @@ Thumbs.db
 __pycache__/
 .pyc
 tests/
+src/eevee/__pycache__/plot_setting.cpython-38.pyc
+*.pyc
