@@ -943,6 +943,7 @@ def plot_coverage_vs_temperature(base_dir, target_potentials, elec_temps, cath_t
 def plot_rates_vs_temperature(base_dir, target_potentials, elec_temps, cath_temps):
     """
     Plot production rates and related elementary steps for each temperature combination.
+    Saves raw data as CSV files.
     """
     # Define line styles for related steps
     line_styles = [
@@ -968,6 +969,17 @@ def plot_rates_vs_temperature(base_dir, target_potentials, elec_temps, cath_temp
     # 표시할 제품 목록 지정
     selected_products = ['H$_2$(g)', 'CO(g)', 'CH$_4$(g)', 'C$_2$H$_4$(g)']
     exclude_products = ['CO$_2$(g)', 'H$_2$O(g)', 'H(g)', 'O$_2$(g)', 'ele(g)', 'HCOOH(g)']  # HCOOH 제외
+    
+    # Dictionary to store data for CSV export
+    csv_data = {
+        'Electrolyte_Temperature(C)': [],
+        'Cathode_Temperature(C)': [],
+        'Product': [],
+        'Production_Rate': [],
+        'Elementary_Step': [],
+        'Elementary_Step_Rate': [],
+        'Potential_vs_RHE(V)': []
+    }
     
     # 제품 데이터 확인
     products = None
@@ -1085,6 +1097,15 @@ def plot_rates_vs_temperature(base_dir, target_potentials, elec_temps, cath_temp
                                 rates.append(float(interpolated_rate))
                                 cath_temps_available.append(cath_temp)
                                 
+                                # Store product rate data for CSV
+                                csv_data['Electrolyte_Temperature(C)'].append(elec_temp)
+                                csv_data['Cathode_Temperature(C)'].append(cath_temp)
+                                csv_data['Product'].append(product)
+                                csv_data['Production_Rate'].append(float(interpolated_rate))
+                                csv_data['Elementary_Step'].append(None)
+                                csv_data['Elementary_Step_Rate'].append(None)
+                                csv_data['Potential_vs_RHE(V)'].append(target_pot)
+                                
                                 for step in product_related_steps[product]:
                                     if step in rate_df.columns:
                                         step_rates = rate_df[step].values
@@ -1093,6 +1114,15 @@ def plot_rates_vs_temperature(base_dir, target_potentials, elec_temps, cath_temp
                                             if step not in related_steps_rates:
                                                 related_steps_rates[step] = []
                                             related_steps_rates[step].append(float(step_rate))
+                                            
+                                            # Store elementary step rate data for CSV
+                                            csv_data['Electrolyte_Temperature(C)'].append(elec_temp)
+                                            csv_data['Cathode_Temperature(C)'].append(cath_temp)
+                                            csv_data['Product'].append(product)
+                                            csv_data['Production_Rate'].append(None)
+                                            csv_data['Elementary_Step'].append(step)
+                                            csv_data['Elementary_Step_Rate'].append(float(step_rate))
+                                            csv_data['Potential_vs_RHE(V)'].append(target_pot)
                                         
                     except Exception as e:
                         print(f"Error in second pass for {folder_path}: {e}")
@@ -1165,6 +1195,12 @@ def plot_rates_vs_temperature(base_dir, target_potentials, elec_temps, cath_temp
     output_file = Path(base_dir) / "rates_vs_temperature_2x2.png"
     plt.savefig(output_file, dpi=300, bbox_inches='tight', pad_inches=0.5)
     plt.show()
+    
+    # Save data to CSV
+    csv_df = pd.DataFrame(csv_data)
+    csv_output_file = Path(base_dir) / "rates_vs_temperature_data.csv"
+    csv_df.to_csv(csv_output_file, index=False, float_format='%.6e')
+    print(f"Raw data saved to {csv_output_file}")
 
 def analyze_temperature_data(base_dir: str, elec_temps: List[int], cath_temps: List[int]):
     """
