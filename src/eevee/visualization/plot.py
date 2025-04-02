@@ -9,7 +9,10 @@ from ..plot_setting import set_scientific_paper_style
 import matplotlib.font_manager as fm
 from typing import List, Dict, Tuple
 from catmap import analyze, ReactionModel
+import catmap
 
+# Print catmap version
+print(f"catmap version: {catmap.__version__}")
 
 helvetica_bold_path = '/Users/aracho/Dropbox/Resources/Fonts-downloaded/Helvetica/Helvetica-Bold.ttf'
 
@@ -1620,3 +1623,284 @@ def plot_rds_temperature_trends(df, base_dir, target_current, step_labels):
 # cath_temps_K = [273, 298, 323, 343]
 # #analyze_temperature_data(cal_dir, elec_temps, cath_temps_K)
 # #results = analyze_rds_at_fixed_current(cal_dir, target_current, rxn_mechanisms, elec_temps, cath_temps)
+
+def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, cath_temps, step_indices=None, steps=None, same_y_scale=False):
+    """
+    Plot rates of specific reaction steps for each temperature combination.
+    
+    Parameters:
+    -----------
+    base_dir : str
+        Base directory containing temperature data folders
+    target_potentials : dict
+        Dictionary mapping (elec_temp, cath_temp) to the target potential value
+    elec_temps : list
+        List of electrolyte temperatures to analyze
+    cath_temps : list
+        List of cathode temperatures to analyze
+    step_indices : list, optional
+        List of reaction step indices to plot (1-indexed, excludes Potential_vs_RHE(V) and Temperature(K) columns)
+    steps : list, optional
+        List of reaction step names to plot (alternative to step_indices)
+    same_y_scale : bool, optional
+        If True, all subplots will use the same y-axis scale (default: False)
+    """
+    if step_indices is None and steps is None:
+        raise ValueError("Either step_indices or steps must be provided")
+    
+    # Define line styles for different steps
+    line_styles = [
+        '-',              # 실선
+        '--',             # 대시
+        ':',              # 점선
+        '-.',             # 대시-점선
+        (0, (1, 1)),      # 촘촘한 점선
+        (0, (3, 1)),      # 일반 점선 
+        (0, (5, 1)),      # 듬성듬성한 점선
+        (0, (1, 1, 3, 1)), # 점-대시
+        (0, (3, 1, 1, 1)), # 대시-점
+        (0, (5, 1, 1, 1)), # 긴대시-점
+    ]
+
+    # 전해질 온도별 색상 정의
+    elec_color_dict = {
+        0: "#24AAE3",    # light blue
+        25: "#047499",
+        70: "#A6202E"
+    }
+    
+    # Dictionary to store data for CSV export
+    csv_data = {
+        'Electrolyte_Temperature(C)': [],
+        'Cathode_Temperature(C)': [],
+        'Elementary_Step': [],
+        'Elementary_Step_Rate': [],
+        'Potential_vs_RHE(V)': []
+    }
+    
+    # If step_indices is provided, get the corresponding step names
+    if step_indices and not steps:
+        # First, get all available steps from any dataset
+        all_steps = []
+        for elec_temp in elec_temps:
+            for cath_temp in cath_temps:
+                # if (elec_temp, cath_temp) not in target_potentials:
+                #     continue
+                    
+                folder_path = Path(base_dir) / f"ElecTemp_{elec_temp}C" / f"CathodeTemp_{int(cath_temp+273)}K"
+                rate_file = folder_path / "rate_map_data.csv"
+                
+                if rate_file.exists():
+                    try:
+                        rate_df = pd.read_csv(rate_file)
+                        #print(f"Rate DataFrame columns: {rate_df.columns}")
+                        # 컬럼 중 Potential_vs_RHE(V)와 Temperature(K)를 제외한 나머지 컬럼이 반응 스텝
+                        available_steps = [col for col in rate_df.columns if col not in ['Potential_vs_RHE(V)', 'Temperature(K)']]
+                        if available_steps:
+                            all_steps = available_steps
+                            break
+                    except Exception as e:
+                        print(f"Error reading steps from {rate_file}: {e}")
+                        continue
+            
+            if all_steps:
+                break
+        
+        if not all_steps:
+            raise ValueError("Could not find any reaction steps in the data files")
+        
+        
+        # Map indices to step names (인덱스는 1부터 시작)
+        steps = []
+        for idx in step_indices:
+            # 1부터 시작하는 인덱스를 0부터 시작하는 인덱스로 변환
+            idx_zero_based = idx - 1
+            if 0 <= idx_zero_based < len(all_steps):
+                steps.append(all_steps[idx_zero_based])
+            else:
+                print(f"Warning: Step index {idx} is out of range (1-{len(all_steps)}), skipping")
+        
+        # 단계 인덱스와 이름을 출력하여 확인
+        print("Available reaction steps:")
+        for i, step in enumerate(all_steps):
+            print(f"Index {i+1}: {step}")  # 1부터 시작하는 인덱스로 출력
+        
+        print("\nSelected steps for plotting:")
+        for i, step in enumerate(steps):
+            if i < len(step_indices):
+                print(f"Step {step_indices[i]}: {step}")
+    
+    # Verify specified steps exist in at least one dataset
+    steps_found = False
+    for elec_temp in elec_temps:
+        for cath_temp in cath_temps:
+            if (elec_temp, cath_temp) not in target_potentials:
+                continue
+                
+            folder_path = Path(base_dir) / f"ElecTemp_{elec_temp}C" / f"CathodeTemp_{int(cath_temp+273)}K"
+            rate_file = folder_path / "rate_map_data.csv"
+            
+            if rate_file.exists():
+                try:
+                    rate_df = pd.read_csv(rate_file)
+                    available_steps = [col for col in rate_df.columns if col not in ['Potential_vs_RHE(V)', 'Temperature(K)']]
+                    
+                    for step in steps:
+                        if step in available_steps:
+                            steps_found = True
+                            break
+                    
+                    if steps_found:
+                        break
+                except Exception as e:
+                    print(f"Error checking steps in {rate_file}: {e}")
+            
+        if steps_found:
+            break
+            
+    if not steps_found:
+        print(f"None of the specified steps {steps} found in any dataset.")
+        return
+        
+    # Collect data for all steps first
+    all_data = {}
+    min_rate = float('inf')
+    max_rate = float('-inf')
+    
+    for step in steps:
+        all_data[step] = {}
+        for elec_temp in elec_temps:
+            all_data[step][elec_temp] = {'cath_temps': [], 'rates': []}
+            
+            for cath_temp in cath_temps:
+                if (elec_temp, cath_temp) not in target_potentials:
+                    continue
+                    
+                target_pot = target_potentials[(elec_temp, cath_temp)]
+                folder_path = Path(base_dir) / f"ElecTemp_{elec_temp}C" / f"CathodeTemp_{int(cath_temp+273)}K"
+                rate_file = folder_path / "rate_map_data.csv"
+                
+                if rate_file.exists():
+                    try:
+                        rate_df = pd.read_csv(rate_file)
+                        
+                        potentials = rate_df['Potential_vs_RHE(V)'].values
+                        
+                        if step in rate_df.columns:
+                            step_data = rate_df[step].values
+                            interpolated_rate = interpolate_point(potentials, step_data, target_pot)
+                            
+                            if interpolated_rate is not None:
+                                rate_value = float(interpolated_rate)
+                                all_data[step][elec_temp]['cath_temps'].append(cath_temp)
+                                all_data[step][elec_temp]['rates'].append(rate_value)
+                                
+                                # Update min and max rates for y-axis scaling
+                                if rate_value > 0:  # Only consider positive values for log scale
+                                    min_rate = min(min_rate, rate_value)
+                                    max_rate = max(max_rate, rate_value)
+                                
+                                # Store elementary step rate data for CSV
+                                csv_data['Electrolyte_Temperature(C)'].append(elec_temp)
+                                csv_data['Cathode_Temperature(C)'].append(cath_temp)
+                                csv_data['Elementary_Step'].append(step)
+                                csv_data['Elementary_Step_Rate'].append(rate_value)
+                                csv_data['Potential_vs_RHE(V)'].append(target_pot)
+                    except Exception as e:
+                        print(f"Error processing {rate_file} for step {step}: {e}")
+                        continue
+    
+    # 인덱스 개수에 맞춰 서브플롯 생성
+    if step_indices:
+        num_plots = len(step_indices)
+    else:
+        num_plots = len(steps)
+    
+    rows = int(np.ceil(num_plots / 2))
+    cols = min(2, num_plots)
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 6*rows))
+    if num_plots == 1:
+        axes = np.array([axes])  # Ensure axes is always array-like
+    axes = axes.flatten()  # 2D 배열을 1D로 변환
+    
+    # Apply padding to y-axis limits for better visualization
+    if same_y_scale and min_rate < float('inf') and max_rate > float('-inf'):
+        y_min = min_rate * 0.5  # Add some padding
+        y_max = max_rate * 2    # Add some padding
+    
+    # Plot data
+    for plot_idx in range(num_plots):
+        if plot_idx >= len(axes):  # 안전 장치
+            break
+            
+        ax = axes[plot_idx]
+        
+        # 반응 단계 결정
+        if plot_idx < len(steps):
+            step = steps[plot_idx]
+        else:
+            # 인덱스는 있지만 해당 스텝이 없는 경우 (예: 건너뛴 경우)
+            ax.set_title(f'Step {step_indices[plot_idx]}: Not Found')
+            continue
+        
+        # 각 플롯마다 레전드 항목을 위한 핸들과 라벨 리스트
+        handles = []
+        labels = []
+        
+        for elec_temp in elec_temps:
+            if elec_temp in all_data[step] and all_data[step][elec_temp]['rates']:
+                cath_temps_available = all_data[step][elec_temp]['cath_temps']
+                step_rates = all_data[step][elec_temp]['rates']
+                
+                # 전해질 온도에 해당하는 색상 가져오기
+                elec_color = elec_color_dict.get(elec_temp, '#333333')  # 기본값은 회색
+                
+                # Plot step rate with semilogy for better visualization
+                line, = ax.semilogy(cath_temps_available, step_rates, '-o', 
+                          color=elec_color, 
+                          linewidth=2)
+                
+                # Add to legend
+                handles.append(line)
+                labels.append(f'Elec {elec_temp}°C')
+        
+        # Add original index if step_indices was used
+        if step_indices and plot_idx < len(step_indices):
+            # Find the index of this step
+            step_index = step_indices[plot_idx]
+            ax.set_title(f'Step {step_index}: {step}')
+        else:
+            ax.set_title(f'{step}')
+        
+        # Set axis labels
+        ax.set_ylabel(f'Rate (s$^{{-1}}$)')
+        ax.set_xlabel('Cathode Temperature (°C)')
+        
+        # Add grid for better readability
+        ax.grid(True, alpha=0.3)
+        
+        # Set y-axis limits if same_y_scale is True
+        if same_y_scale and min_rate < float('inf') and max_rate > float('-inf'):
+            ax.set_ylim(y_min, y_max)
+        
+        # Add legend
+        if handles:
+            ax.legend(handles, labels, 
+                     loc='best', 
+                     fontsize=8)
+    
+    plt.tight_layout()
+    
+    # Save CSV data
+    csv_df = pd.DataFrame(csv_data)
+    csv_file_path = Path(base_dir) / f"reaction_steps_vs_temperature_data.csv"
+    csv_df.to_csv(csv_file_path, index=False)
+    print(f"Saved data to {csv_file_path}")
+    
+    # Save plot
+    fig_file_path = Path(base_dir) / f"reaction_steps_vs_temperature.png"
+    plt.savefig(fig_file_path, dpi=300, bbox_inches='tight')
+    print(f"Saved figure to {fig_file_path}")
+    
+    return fig, csv_df
