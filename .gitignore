@@ -5,7 +5,7 @@ Thumbs.db
 .env
 .env.local
 __pycache__/
-.pyc
+*.py[cod]
+*$py.class
 tests/
-src/eevee/__pycache__/plot_setting.cpython-38.pyc
 *.pyc
