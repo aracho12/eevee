@@ -12,7 +12,7 @@ from catmap import analyze, ReactionModel
 import catmap
 
 # Print catmap version
-print(f"catmap version: {catmap.__version__}")
+#print(f"catmap version: {catmap.__version__}")
 
 helvetica_bold_path = '/Users/aracho/Dropbox/Resources/Fonts-downloaded/Helvetica/Helvetica-Bold.ttf'
 
@@ -1721,14 +1721,14 @@ def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, 
                 print(f"Warning: Step index {idx} is out of range (1-{len(all_steps)}), skipping")
         
         # 단계 인덱스와 이름을 출력하여 확인
-        print("Available reaction steps:")
-        for i, step in enumerate(all_steps):
-            print(f"Index {i+1}: {step}")  # 1부터 시작하는 인덱스로 출력
+        #print("Available reaction steps:")
+        #for i, step in enumerate(all_steps):
+        #    print(f"Index {i+1}: {step}")  # 1부터 시작하는 인덱스로 출력
         
-        print("\nSelected steps for plotting:")
-        for i, step in enumerate(steps):
-            if i < len(step_indices):
-                print(f"Step {step_indices[i]}: {step}")
+        #print("\nSelected steps for plotting:")
+        #for i, step in enumerate(steps):
+        #    if i < len(step_indices):
+        #        print(f"Step {step_indices[i]}: {step}")
     
     # Verify specified steps exist in at least one dataset
     steps_found = False
@@ -1903,4 +1903,4 @@ def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, 
     plt.savefig(fig_file_path, dpi=300, bbox_inches='tight')
     print(f"Saved figure to {fig_file_path}")
     
-    return fig, csv_df
+    return fig
