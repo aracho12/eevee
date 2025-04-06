@@ -10,6 +10,12 @@ import matplotlib.font_manager as fm
 from typing import List, Dict, Tuple
 from catmap import analyze, ReactionModel
 import catmap
+import matplotlib.gridspec as gridspec
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import matplotlib.colors as mcolors
+from collections import defaultdict
+import re
 
 # Print catmap version
 #print(f"catmap version: {catmap.__version__}")
@@ -1721,9 +1727,9 @@ def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, 
                 print(f"Warning: Step index {idx} is out of range (1-{len(all_steps)}), skipping")
         
         # 단계 인덱스와 이름을 출력하여 확인
-        #print("Available reaction steps:")
-        #for i, step in enumerate(all_steps):
-        #    print(f"Index {i+1}: {step}")  # 1부터 시작하는 인덱스로 출력
+        print("Available reaction steps:")
+        for i, step in enumerate(all_steps):
+           print(f"Index {i+1}: {step}")  # 1부터 시작하는 인덱스로 출력
         
         #print("\nSelected steps for plotting:")
         #for i, step in enumerate(steps):
@@ -1816,10 +1822,10 @@ def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, 
     else:
         num_plots = len(steps)
     
-    rows = int(np.ceil(num_plots / 2))
-    cols = min(2, num_plots)
+    rows = int(np.ceil(num_plots / 4))
+    cols = min(4, num_plots)
     
-    fig, axes = plt.subplots(rows, cols, figsize=(12, 6*rows))
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 6*rows))
     if num_plots == 1:
         axes = np.array([axes])  # Ensure axes is always array-like
     axes = axes.flatten()  # 2D 배열을 1D로 변환
@@ -1903,4 +1909,803 @@ def plot_reaction_steps_vs_temperature(base_dir, target_potentials, elec_temps, 
     plt.savefig(fig_file_path, dpi=300, bbox_inches='tight')
     print(f"Saved figure to {fig_file_path}")
     
+    return fig, csv_df
+
+def plot_step_contributions_by_product(base_dir, elec_temps, cath_temps, product_steps_mapping, fixed_elec_temp=None, target_potential=None):
+    """
+    Plot elementary reaction step rates vs temperature, organized by product contribution.
+    
+    Parameters:
+    -----------
+    base_dir : str
+        Base directory for data files
+    elec_temps : list
+        List of electrolyte temperatures
+    cath_temps : list
+        List of cathode temperatures
+    product_steps_mapping : dict
+        Dictionary mapping products to lists of contributing elementary step indices
+    fixed_elec_temp : int, optional
+        If provided, only plot data for this electrolyte temperature
+    target_potential : float, optional
+        If provided, only plot data for the closest potential to this value
+    
+    Returns:
+    --------
+    None
+        Saves plots to disk
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+    import numpy as np
+    import pandas as pd
+    import os
+    
+    # Load the reaction steps vs temperature data
+    csv_path = os.path.join(base_dir, "reaction_steps_vs_temperature_data.csv")
+    if not os.path.exists(csv_path):
+        print(f"Data file not found: {csv_path}")
+        return
+        
+    data = pd.read_csv(csv_path)
+    
+    # Filter by electrolyte temperature if specified
+    if fixed_elec_temp is not None:
+        data = data[data['Electrolyte_Temperature(C)'] == fixed_elec_temp]
+    
+    # Get unique step labels for mapping
+    step_labels = data['Elementary_Step'].unique()
+    step_indices = {i+1: step for i, step in enumerate(step_labels)}
+    reverse_step_indices = {step: i+1 for i, step in enumerate(step_labels)}
+    
+    # Filter by potential if specified
+    if target_potential is not None:
+        # Group by temperature combinations
+        temp_groups = data.groupby(['Electrolyte_Temperature(C)', 'Cathode_Temperature(C)'])
+        filtered_data = []
+        
+        for (elec_temp, cath_temp), group in temp_groups:
+            potentials = group['Potential_vs_RHE(V)'].unique()
+            closest_pot = potentials[np.abs(potentials - target_potential).argmin()]
+            filtered_group = group[group['Potential_vs_RHE(V)'] == closest_pot]
+            filtered_data.append(filtered_group)
+            
+        data = pd.concat(filtered_data)
+    
+    # Create a figure with subplots for each product
+    num_products = len(product_steps_mapping)
+    fig = plt.figure(figsize=(12, 3*num_products))
+    gs = gridspec.GridSpec(num_products, 1, figure=fig)
+    
+    # Define a color cycle for steps
+    colors = plt.cm.tab20(np.linspace(0, 1, 20))
+    color_idx = 0
+    
+    for i, (product, step_indices_list) in enumerate(product_steps_mapping.items()):
+        ax = fig.add_subplot(gs[i])
+        
+        # Map step indices to actual step labels if needed
+        step_labels_for_product = [step_indices.get(idx, f"Step {idx}") for idx in step_indices_list]
+        
+        # Create a dictionary to store the data for each step
+        step_data = {step: {} for step in step_labels_for_product}
+        
+        # Get unique elec temps and cath temps for plotting
+        if fixed_elec_temp is not None:
+            unique_elec_temps = [fixed_elec_temp]
+        else:
+            unique_elec_temps = sorted(data['Electrolyte_Temperature(C)'].unique())
+            
+        unique_cath_temps = sorted(data['Cathode_Temperature(C)'].unique())
+        
+        # For each electrolyte temperature
+        for elec_temp in unique_elec_temps:
+            elec_data = data[data['Electrolyte_Temperature(C)'] == elec_temp]
+            
+            # For each step
+            for step_idx in step_indices_list:
+                step = step_indices.get(step_idx, f"Step {step_idx}")
+                if step in reverse_step_indices:
+                    step_data = elec_data[elec_data['Elementary_Step'] == step]
+                    
+                    # Sort by cathode temperature
+                    step_data = step_data.sort_values('Cathode_Temperature(C)')
+                    
+                    # Plot the rate vs cathode temperature
+                    label = f"{step_idx}: {step.split('$')[0][:20]}..." if len(step) > 25 else f"{step_idx}: {step}"
+                    color = colors[color_idx % len(colors)]
+                    ax.plot(step_data['Cathode_Temperature(C)'], 
+                            step_data['Elementary_Step_Rate'], 
+                            'o-', 
+                            label=label,
+                            color=color)
+                    
+                    color_idx += 1
+        
+        # Format the plot
+        ax.set_title(f"{product} Production - Contributing Elementary Steps")
+        ax.set_xlabel("Cathode Temperature (°C)")
+        ax.set_ylabel("Elementary Step Rate")
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+        # Show legend with smaller font size if many steps
+        if len(step_indices_list) > 5:
+            ax.legend(fontsize='small', loc='best')
+        else:
+            ax.legend(loc='best')
+            
+    plt.tight_layout()
+    
+    # Define filename based on parameters
+    filename = "step_contributions_by_product"
+    if fixed_elec_temp is not None:
+        filename += f"_elec{fixed_elec_temp}C"
+    if target_potential is not None:
+        filename += f"_pot{target_potential:.2f}V"
+    
+    # Save the figure
+    save_path = os.path.join(base_dir, f"{filename}.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved figure to {save_path}")
+    
+    plt.close(fig)
+    
+    # Create a heatmap visualization of all steps across temperatures
+    plot_step_contributions_heatmap(data, base_dir, product_steps_mapping, fixed_elec_temp, target_potential)
+
+def plot_step_contributions_heatmap(data, base_dir, product_steps_mapping, fixed_elec_temp=None, target_potential=None):
+    """
+    Create a heatmap visualization of how elementary steps change with temperature and contribute to products.
+    
+    Parameters are the same as plot_step_contributions_by_product
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import os
+    import seaborn as sns
+    
+    # Get unique step labels
+    step_labels = data['Elementary_Step'].unique()
+    
+    # Get unique cathode temperatures
+    unique_cath_temps = sorted(data['Cathode_Temperature(C)'].unique())
+    
+    # Create a reverse mapping from products to steps
+    step_to_products = {}
+    for product, steps in product_steps_mapping.items():
+        for step in steps:
+            if step not in step_to_products:
+                step_to_products[step] = []
+            step_to_products[step].append(product)
+    
+    # Create a matrix for the heatmap
+    heatmap_data = np.zeros((len(step_labels), len(unique_cath_temps)))
+    
+    # Filter by electrolyte temperature if specified
+    if fixed_elec_temp is not None:
+        data = data[data['Electrolyte_Temperature(C)'] == fixed_elec_temp]
+    else:
+        # Just use the first electrolyte temperature if none specified
+        fixed_elec_temp = data['Electrolyte_Temperature(C)'].iloc[0]
+        data = data[data['Electrolyte_Temperature(C)'] == fixed_elec_temp]
+    
+    # Fill the matrix with reaction rates
+    for i, step in enumerate(step_labels):
+        for j, cath_temp in enumerate(unique_cath_temps):
+            mask = (data['Elementary_Step'] == step) & (data['Cathode_Temperature(C)'] == cath_temp)
+            if mask.any():
+                heatmap_data[i, j] = data.loc[mask, 'Elementary_Step_Rate'].mean()
+    
+    # Create figure
+    plt.figure(figsize=(12, 16))
+    
+    # Create labels that include product information
+    y_labels = []
+    for i, step in enumerate(step_labels):
+        step_idx = i + 1
+        products = step_to_products.get(step_idx, [])
+        product_str = ", ".join(products) if products else "NA"
+        # Truncate long reaction equations
+        if len(step) > 30:
+            step_text = f"{step_idx}: {step[:30]}... → {product_str}"
+        else:
+            step_text = f"{step_idx}: {step} → {product_str}"
+        y_labels.append(step_text)
+    
+    # Create the heatmap
+    ax = sns.heatmap(heatmap_data, 
+                    cmap="viridis", 
+                    xticklabels=unique_cath_temps,
+                    yticklabels=y_labels,
+                    annot=False,
+                    cbar_kws={'label': 'Reaction Rate'})
+    
+    # Set labels and title
+    elec_temp_str = f"{fixed_elec_temp}°C"
+    pot_str = f" at {target_potential:.2f} V" if target_potential is not None else ""
+    plt.title(f"Elementary Step Rates vs Temperature (Elec Temp: {elec_temp_str}{pot_str})")
+    plt.xlabel("Cathode Temperature (°C)")
+    plt.ylabel("Elementary Reaction Steps")
+    
+    # Rotate y-axis labels for better readability
+    plt.yticks(rotation=0)
+    
+    # Save the figure
+    filename = "step_heatmap"
+    if fixed_elec_temp is not None:
+        filename += f"_elec{fixed_elec_temp}C"
+    if target_potential is not None:
+        filename += f"_pot{target_potential:.2f}V"
+    
+    save_path = os.path.join(base_dir, f"{filename}.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved heatmap to {save_path}")
+    
+    plt.close()
+
+def interactive_reaction_steps_vs_temperature(base_dir, csv_filename="reaction_steps_vs_temperature_data.csv", 
+                                             elec_temps=[0, 25, 70], height=900, width=1400, 
+                                             product_steps_mapping=None, step_reactions=None):
+    """
+    Create an interactive HTML visualization of reaction steps vs temperature with advanced filtering.
+    
+    Parameters:
+    -----------
+    base_dir : str
+        Base directory for data files
+    csv_filename : str
+        Name of the CSV file containing reaction steps vs temperature data
+    elec_temps : list
+        List of electrolyte temperatures to show in subplots (default: [0, 25, 70])
+    height : int
+        Height of the plot in pixels
+    width : int
+        Width of the plot in pixels
+    product_steps_mapping : dict, optional
+        Dictionary mapping products to lists of contributing elementary step indices
+    step_reactions : dict, optional
+        Dictionary mapping step indices to reaction strings
+        
+    Returns:
+    --------
+    fig : Plotly figure object
+        The interactive figure object that was saved as HTML
+    """
+    import pandas as pd
+    import numpy as np
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import os
+    from collections import defaultdict
+    import re
+    
+    # Define step reactions if not provided
+    if step_reactions is None:
+        step_reactions = {
+            1: "H+ + e- + * $ \\rightarrow $ H*",
+            2: "H+ + e- + H* $ \\rightarrow $ H2 + *",
+            3: "H* + H* $ \\rightarrow $ H2 + * + *",
+            4: "H+ + e- + OH* $ \\rightarrow $ H2O + *",
+            5: "H+ + e- + CO2 + * + * $ \\rightarrow $ COOH*",
+            6: "H+ + e- + COOH* $ \\rightarrow $ CO* + H2O + *",
+            7: "CO* $ \\rightarrow $ CO + *",
+            8: "e- + CO2 + H* + * $ \\rightarrow $ HCOO*",
+            9: "H+ + e- + HCOO* $ \\rightarrow $ HCOOH+ + * + *",
+            10: "H+ + e- + CHO* $ \\rightarrow $ CHOH*",
+            11: "H+ + e- + CHOH* $ \\rightarrow $ CH* + H2O",
+            12: "H+ + e- + CH* $ \\rightarrow $ CH2*",
+            13: "H+ + e- + CH2* $ \\rightarrow $ CH3*",
+            14: "H+ + e- + CH3* $ \\rightarrow $ CH4 + *",
+            15: "H+ + e- + CO* $ \\rightarrow $ COH*",
+            16: "H+ + e- + COH* $ \\rightarrow $ C* + H2O",
+            17: "H+ + e- + C* $ \\rightarrow $ CH*",
+            18: "CO* + H* $ \\rightarrow $ CHO* + *",
+            19: "COH* + H* $ \\rightarrow $ CHOH* + *",
+            20: "C* + H* $ \\rightarrow $ CH* + *",
+            21: "CH* + H* $ \\rightarrow $ CH2* + *",
+            22: "CH2* + H* $ \\rightarrow $ CH3* + *",
+            23: "CH3* + H* $ \\rightarrow $ CH4 + * + *",
+            24: "O2 + * $ \\rightarrow $ O2*",
+            25: "CO* + C* $ \\rightarrow $ OCC* + *",
+            26: "CO + C* $ \\rightarrow $ OCC*",
+            27: "H+ + e- + OCC* $ \\rightarrow $ OCCH*",
+            28: "5H+ + 5e- + OCCH* $ \\rightarrow $ C2H4 + H2O + *",
+            29: "CH2* + CH2* $ \\rightarrow $ C2H4 + * + *",
+            30: "CO* + CO* $ \\rightarrow $ OCCO*",
+            31: "H+ + e- + OCCO* $ \\rightarrow $ OCCOH*",
+            32: "H+ + e- + OCCOH* $ \\rightarrow $ OCC* + H2O + *",
+            33: "CO* + CH* $ \\rightarrow $ OCCH* + *",
+            34: "H+ + e- + CO* $ \\rightarrow $ CHO*"
+        }
+    
+    # Load the data
+    csv_path = os.path.join(base_dir, csv_filename)
+    if not os.path.exists(csv_path):
+        print(f"Data file not found: {csv_path}")
+        return
+        
+    data = pd.read_csv(csv_path)
+    
+    # Filter data for the specified electrolyte temperatures
+    filtered_data = data[data['Electrolyte_Temperature(C)'].isin(elec_temps)]
+    
+    # Get unique reaction steps and sort them
+    steps = sorted(filtered_data['Elementary_Step'].unique())
+    
+    # Create a product steps mapping if not provided
+    if product_steps_mapping is None:
+        product_steps_mapping = {}
+        # Build from reaction mechanisms
+        for product, mechanisms in product_to_mechanisms.items():
+            product_steps = []
+            for mech in mechanisms:
+                if mech in rxn_mechanisms:
+                    product_steps.extend(rxn_mechanisms[mech])
+            product_steps_mapping[product] = sorted(list(set(product_steps)))
+    
+    # Extract intermediate species from reactions
+    intermediates = set()
+    for step_idx, reaction in step_reactions.items():
+        # Find all species with asterisk (*)
+        species = re.findall(r'(\w+\*\w*|\w*\*\w+)', reaction)
+        # Filter out standalone * (which could be matched as part of other species)
+        species = [s for s in species if s != '*']
+        for s in species:
+            if s not in ['H+', 'e-']:
+                intermediates.add(s)
+    
+    # Create intermediate to steps mapping
+    intermediate_to_steps = defaultdict(list)
+    for step_idx, reaction in step_reactions.items():
+        for intermediate in intermediates:
+            if intermediate in reaction:
+                intermediate_to_steps[intermediate].append(step_idx)
+    
+    # Identify electrochemical vs thermochemical steps
+    electrochemical_steps = []
+    thermochemical_steps = []
+    for step_idx, reaction in step_reactions.items():
+        if "H+ + e-" in reaction or "e- +" in reaction:
+            electrochemical_steps.append(step_idx)
+        else:
+            thermochemical_steps.append(step_idx)
+    
+    # Create subplots - 1 row, multiple columns
+    fig = make_subplots(
+        rows=1, 
+        cols=len(elec_temps),
+        subplot_titles=[f"Electrolyte Temperature: {temp}°C" for temp in elec_temps],
+        shared_yaxes=True,
+        horizontal_spacing=0.05
+    )
+    
+    # Define a color map for the steps
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    
+    # Create a colormap with enough distinct colors
+    num_steps = len(steps)
+    colormap = plt.cm.tab20  # Use tab20 for up to 20 distinct colors
+    if num_steps > 20:
+        # If more than 20 steps, create a larger colormap
+        colormap = plt.cm.gist_rainbow
+    
+    colors = [mcolors.rgb2hex(colormap(i)) for i in np.linspace(0, 1, num_steps)]
+    
+    # Dictionary to track all traces for each step
+    step_traces = defaultdict(list)
+    
+    # Add traces for each step in each subplot
+    for i, elec_temp in enumerate(elec_temps):
+        temp_data = filtered_data[filtered_data['Electrolyte_Temperature(C)'] == elec_temp]
+        
+        for j, step in enumerate(steps):
+            step_data = temp_data[temp_data['Elementary_Step'] == step]
+            
+            if not step_data.empty:
+                # Find the step index for this reaction
+                step_idx = None
+                for idx, reaction in step_reactions.items():
+                    # Clean up symbols and whitespace for comparison
+                    clean_step = ' '.join(step.replace('$', '').split())
+                    clean_reaction = ' '.join(reaction.replace('$', '').split())
+                    if clean_step == clean_reaction:
+                        step_idx = idx
+                        break
+                
+                if step_idx is None:
+                    # If we can't find the exact match, try to match the beginning of the reaction
+                    for idx, reaction in step_reactions.items():
+                        if step.split('$')[0].strip() in reaction:
+                            step_idx = idx
+                            break
+                
+                # If we still can't find it, use the loop index + 1
+                if step_idx is None:
+                    step_idx = j + 1
+                
+                # Sort by cathode temperature
+                step_data = step_data.sort_values('Cathode_Temperature(C)')
+                
+                # Create label with step index and abbreviated reaction
+                simple_step_label = f"Step {step_idx}: {step.split('$')[0].strip()}"
+                if len(simple_step_label) > 30:
+                    simple_step_label = simple_step_label[:27] + "..."
+                
+                # Add trace with visibility=True initially
+                trace = go.Scatter(
+                    x=step_data['Cathode_Temperature(C)'],
+                    y=step_data['Elementary_Step_Rate'],
+                    mode='lines+markers',
+                    name=simple_step_label,
+                    line=dict(color=colors[j % len(colors)]),
+                    legendgroup=f"step_{step_idx}",
+                    showlegend=(i == 0),  # Only show in legend for first subplot
+                    customdata=[[step_idx, step]] * len(step_data),
+                    hovertemplate="<b>%{customdata[0]}: %{customdata[1]}</b><br>" +
+                                  "Temperature: %{x}°C<br>" +
+                                  "Rate: %{y:.3e} s<sup>-1</sup><br>" +
+                                  "<extra></extra>"
+                )
+                
+                fig.add_trace(
+                    trace,
+                    row=1, 
+                    col=i+1
+                )
+                
+                # Store this trace's index for later use with buttons
+                step_traces[step_idx].append(len(fig.data) - 1)
+    
+    # Create button configurations for filtering
+    mechanism_buttons = [
+        dict(
+            label="All Steps",
+            method="update",
+            args=[{"visible": [True] * len(fig.data)},
+                  {"title": "All Reaction Steps"}]
+        ),
+        dict(
+            label="None",
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": "No Steps Selected"}]
+        )
+    ]
+    
+    # Add mechanism filter buttons
+    for mech_name, step_indices in rxn_mechanisms.items():
+        visibility = [False] * len(fig.data)
+        for step_idx in step_indices:
+            if step_idx in step_traces:
+                for trace_idx in step_traces[step_idx]:
+                    visibility[trace_idx] = True
+        
+        mechanism_buttons.append(
+            dict(
+                label=mech_name,
+                method="update",
+                args=[{"visible": visibility},
+                      {"title": f"Steps in {mech_name} Mechanism"}]
+            )
+        )
+    
+    # Add product filter buttons
+    product_buttons = [
+        dict(
+            label="All Products",
+            method="update",
+            args=[{"visible": [True] * len(fig.data)},
+                  {"title": "All Products"}]
+        ),
+        dict(
+            label="None",
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": "No Products Selected"}]
+        )
+    ]
+    
+    # Add buttons for each product
+    for product, step_indices in product_steps_mapping.items():
+        visibility = [False] * len(fig.data)
+        for step_idx in step_indices:
+            if step_idx in step_traces:
+                for trace_idx in step_traces[step_idx]:
+                    visibility[trace_idx] = True
+        
+        product_buttons.append(
+            dict(
+                label=product,
+                method="update",
+                args=[{"visible": visibility},
+                      {"title": f"Steps Contributing to {product}"}]
+            )
+        )
+    
+    # Add intermediate filter buttons
+    intermediate_buttons = [
+        dict(
+            label="All Intermediates",
+            method="update",
+            args=[{"visible": [True] * len(fig.data)},
+                  {"title": "All Intermediates"}]
+        ),
+        dict(
+            label="None",
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": "No Intermediates Selected"}]
+        )
+    ]
+    
+    # Add buttons for each intermediate
+    for intermediate, step_indices in sorted(intermediate_to_steps.items()):
+        visibility = [False] * len(fig.data)
+        for step_idx in step_indices:
+            if step_idx in step_traces:
+                for trace_idx in step_traces[step_idx]:
+                    visibility[trace_idx] = True
+        
+        intermediate_buttons.append(
+            dict(
+                label=intermediate,
+                method="update",
+                args=[{"visible": visibility},
+                      {"title": f"Steps with {intermediate}"}]
+            )
+        )
+    
+    # Add reaction type filter buttons
+    reaction_type_buttons = [
+        dict(
+            label="All Reactions",
+            method="update",
+            args=[{"visible": [True] * len(fig.data)},
+                  {"title": "All Reaction Types"}]
+        ),
+        dict(
+            label="Electrochemical",
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": "Electrochemical Reactions (H+ + e-)"}]
+        ),
+        dict(
+            label="Thermochemical",
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": "Thermochemical Reactions"}]
+        )
+    ]
+    
+    # Set visibility for electrochemical reactions
+    ec_visibility = [False] * len(fig.data)
+    for step_idx in electrochemical_steps:
+        if step_idx in step_traces:
+            for trace_idx in step_traces[step_idx]:
+                ec_visibility[trace_idx] = True
+    reaction_type_buttons[1]["args"][0]["visible"] = ec_visibility
+    
+    # Set visibility for thermochemical reactions
+    tc_visibility = [False] * len(fig.data)
+    for step_idx in thermochemical_steps:
+        if step_idx in step_traces:
+            for trace_idx in step_traces[step_idx]:
+                tc_visibility[trace_idx] = True
+    reaction_type_buttons[2]["args"][0]["visible"] = tc_visibility
+    
+    # Add all filter menus
+    fig.update_layout(
+        height=height,
+        width=width,
+        title='Reaction Steps vs Temperature',
+        legend=dict(
+            title="Reaction Steps",
+            groupclick="toggleitem",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.02
+        ),
+        updatemenus=[
+            # 1. Mechanism filter dropdown
+            dict(
+                buttons=mechanism_buttons,
+                direction="down",
+                pad={"r": 10, "t": 10},
+                showactive=True,
+                x=0.1,
+                xanchor="left",
+                y=1.15,
+                yanchor="top",
+                bgcolor="lightgray",
+                font=dict(size=12)
+            ),
+            # 2. Product filter dropdown
+            dict(
+                buttons=product_buttons,
+                direction="down",
+                pad={"r": 10, "t": 10},
+                showactive=True,
+                x=0.25,
+                xanchor="left",
+                y=1.15,
+                yanchor="top",
+                bgcolor="lightgray",
+                font=dict(size=12)
+            ),
+            # 3. Intermediate filter dropdown
+            dict(
+                buttons=intermediate_buttons,
+                direction="down",
+                pad={"r": 10, "t": 10},
+                showactive=True,
+                x=0.4,
+                xanchor="left",
+                y=1.15,
+                yanchor="top",
+                bgcolor="lightgray",
+                font=dict(size=12)
+            ),
+            # 4. Reaction type filter dropdown
+            dict(
+                buttons=reaction_type_buttons,
+                direction="down",
+                pad={"r": 10, "t": 10},
+                showactive=True,
+                x=0.55,
+                xanchor="left",
+                y=1.15,
+                yanchor="top",
+                bgcolor="lightgray",
+                font=dict(size=12)
+            ),
+            # 5. Y-axis scale buttons
+            dict(
+                type="buttons",
+                direction="right",
+                x=0.7,
+                y=1.15,
+                showactive=True,
+                buttons=[
+                    dict(
+                        label="Linear Scale",
+                        method="relayout",
+                        args=[{f"yaxis{i+1}.type": "linear" for i in range(1, len(elec_temps)+1)}]
+                    ),
+                    dict(
+                        label="Log Scale",
+                        method="relayout",
+                        args=[{f"yaxis{i+1}.type": "log" for i in range(1, len(elec_temps)+1)}]
+                    )
+                ]
+            )
+        ],
+        # Add annotations for filter labels
+        annotations=[
+            dict(
+                text="Filter by Mechanism:",
+                x=0.01,
+                y=1.15,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12)
+            ),
+            dict(
+                text="Filter by Product:",
+                x=0.16,
+                y=1.15,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12)
+            ),
+            dict(
+                text="Filter by Intermediate:",
+                x=0.31,
+                y=1.15,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12)
+            ),
+            dict(
+                text="Filter by Type:",
+                x=0.46,
+                y=1.15,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12)
+            ),
+            dict(
+                text="Y-axis Scale:",
+                x=0.61,
+                y=1.15,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12)
+            )
+        ]
+    )
+    
+    # Set axes labels and ranges
+    for i in range(len(elec_temps)):
+        # First subplot has Y-axis title
+        if i == 0:
+            fig.update_yaxes(
+                title_text="Elementary Step Rate (s<sup>-1</sup>)", 
+                row=1, 
+                col=i+1,
+                type="linear"
+            )
+        else:
+            fig.update_yaxes(
+                row=1, 
+                col=i+1,
+                type="linear"
+            )
+        
+        # All subplots have X-axis title
+        fig.update_xaxes(
+            title_text="Cathode Temperature (°C)", 
+            row=1, 
+            col=i+1
+        )
+    
+    # Save as HTML with self-contained plotly.js
+    html_path = os.path.join(base_dir, "interactive_reaction_steps.html")
+    fig.write_html(
+        html_path, 
+        include_plotlyjs='cdn',
+        full_html=True,
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+            'toImageButtonOptions': {
+                'format': 'png',
+                'filename': 'reaction_steps_vs_temperature',
+                'height': height,
+                'width': width,
+                'scale': 2
+            }
+        }
+    )
+    print(f"Interactive visualization saved to {html_path}")
+    
     return fig
+
+# Example product mapping dictionary for C2+ products and CO2 reduction
+default_product_steps_mapping = {
+    "COg": [5, 6, 7],  # CO2R_CO pathway
+    "C2H4g": [5, 6, 7, 30, 31, 32, 27, 28],  # CO2R_C2_via_OCCOH pathway
+    "H2g": [1, 2, 3],  # HER_Heyrovsky and HER_Tafel pathways
+    "CH4g": [5, 6, 15, 16, 17, 12, 13, 14],  # CO2R_C1_via_CO-H-ele pathway
+    "HCOOHg": [1, 8, 9]  # CO2R_HCOOH pathway
+}
+
+# Update the reaction mechanisms dictionary with correct steps
+rxn_mechanisms = {
+    'HER_Heyrovsky': [1, 2],
+    'HER_Tafel': [1, 3],
+    'CO2R_CO': [5, 6, 7],
+    'CO2R_HCOOH': [8, 9],
+    'CO2R_C1_via_CO-H-ele': [5, 6, 15, 16, 17, 12, 13, 14],
+    'CO2R_C1_via_H-CO': [5, 6, 1, 18, 10, 11, 12, 13, 14],
+    'CO2R_C2_via_OCCOH': [5, 6, 5, 6, 30, 31, 32, 27, 28],
+    'CO2R_C2_via_C-CO': [5, 6, 15, 16, 26, 27, 28],
+    'CO2R_C2_via_CH-CO': [5, 6, 15, 16, 17, 5, 6, 33, 28]
+}
+
+# Define product to mechanism mapping
+product_to_mechanisms = {
+    'H2g': ['HER_Heyrovsky', 'HER_Tafel'],
+    'COg': ['CO2R_CO'],
+    'HCOOHg': ['CO2R_HCOOH'],
+    'CH4g': ['CO2R_C1_via_CO-H-ele', 'CO2R_C1_via_H-CO'],
+    'C2H4g': ['CO2R_C2_via_OCCOH', 'CO2R_C2_via_C-CO', 'CO2R_C2_via_CH-CO']
+}
